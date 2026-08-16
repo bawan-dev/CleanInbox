@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 const timestamps = {
@@ -17,6 +18,19 @@ export const tenants = sqliteTable(
   (table) => [uniqueIndex("tenants_slug_unique").on(table.slug)],
 );
 
+export const users = sqliteTable(
+  "users",
+  {
+    id: text("id").primaryKey(),
+    email: text("email").notNull(),
+    displayName: text("display_name"),
+    status: text("status", { enum: ["active", "disabled"] }).notNull().default("active"),
+    lastSignedInAt: integer("last_signed_in_at", { mode: "timestamp_ms" }),
+    ...timestamps,
+  },
+  (table) => [uniqueIndex("users_email_unique").on(table.email)],
+);
+
 export const memberships = sqliteTable(
   "memberships",
   {
@@ -25,15 +39,17 @@ export const memberships = sqliteTable(
       .notNull()
       .references(() => tenants.id, { onDelete: "cascade" }),
     userEmail: text("user_email").notNull(),
-    role: text("role", { enum: ["admin", "approver", "operator", "viewer"] })
+    role: text("role", {
+      enum: ["owner", "reviewer", "admin", "approver", "operator", "viewer"],
+    })
       .notNull()
-      .default("viewer"),
+      .default("reviewer"),
     status: text("status", { enum: ["active", "disabled"] }).notNull().default("active"),
     ...timestamps,
   },
   (table) => [
     uniqueIndex("memberships_tenant_email_unique").on(table.tenantId, table.userEmail),
-    index("memberships_email_idx").on(table.userEmail),
+    uniqueIndex("memberships_email_unique").on(table.userEmail),
   ],
 );
 
@@ -53,7 +69,7 @@ export const tenantSettings = sqliteTable(
       .notNull()
       .default(85),
     autoDraft: integer("auto_draft", { mode: "boolean" }).notNull().default(true),
-    autoLabel: integer("auto_label", { mode: "boolean" }).notNull().default(true),
+    autoLabel: integer("auto_label", { mode: "boolean" }).notNull().default(false),
     autoSend: integer("auto_send", { mode: "boolean" }).notNull().default(false),
     autoArchive: integer("auto_archive", { mode: "boolean" }).notNull().default(false),
     autoForward: integer("auto_forward", { mode: "boolean" }).notNull().default(false),
@@ -86,6 +102,18 @@ export const tenantSettings = sqliteTable(
     piiRedactionEnabled: integer("pii_redaction_enabled", { mode: "boolean" })
       .notNull()
       .default(true),
+    initialSyncLimit: integer("initial_sync_limit").notNull().default(25),
+    contentRetentionDays: integer("content_retention_days").notNull().default(30),
+    attachmentsEnabled: integer("attachments_enabled", { mode: "boolean" })
+      .notNull()
+      .default(false),
+    retainDraftAfterGmailCreation: integer("retain_draft_after_gmail_creation", {
+      mode: "boolean",
+    })
+      .notNull()
+      .default(true),
+    businessTimezone: text("business_timezone").notNull().default("UTC"),
+    businessInstructions: text("business_instructions").notNull().default(""),
     version: integer("version").notNull().default(1),
     ...timestamps,
   },
@@ -101,12 +129,19 @@ export const mailboxes = sqliteTable(
       .references(() => tenants.id, { onDelete: "cascade" }),
     provider: text("provider").notNull(),
     providerMailboxId: text("provider_mailbox_id").notNull(),
+    providerAccountId: text("provider_account_id").notNull(),
     address: text("address").notNull(),
     displayName: text("display_name"),
     status: text("status", { enum: ["active", "disconnected", "error"] })
       .notNull()
       .default("active"),
-    credentialReference: text("credential_reference").notNull(),
+    credentialReference: text("credential_reference"),
+    grantedScopesJson: text("granted_scopes_json").notNull().default("[]"),
+    tokenExpiresAt: integer("token_expires_at", { mode: "timestamp_ms" }),
+    lastSuccessfulSyncAt: integer("last_successful_sync_at", { mode: "timestamp_ms" }),
+    lastHistoryId: text("last_history_id"),
+    connectionErrorCode: text("connection_error_code"),
+    disconnectedAt: integer("disconnected_at", { mode: "timestamp_ms" }),
     ...timestamps,
   },
   (table) => [
@@ -115,7 +150,94 @@ export const mailboxes = sqliteTable(
       table.provider,
       table.providerMailboxId,
     ),
+    uniqueIndex("mailboxes_provider_account_unique").on(
+      table.provider,
+      table.providerAccountId,
+    ),
+    uniqueIndex("mailboxes_tenant_active_provider_unique")
+      .on(table.tenantId, table.provider)
+      .where(sql`${table.status} = 'active'`),
     index("mailboxes_tenant_idx").on(table.tenantId),
+  ],
+);
+
+export const mailboxCredentials = sqliteTable(
+  "mailbox_credentials",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    mailboxId: text("mailbox_id")
+      .notNull()
+      .references(() => mailboxes.id, { onDelete: "cascade" }),
+    accessTokenEncrypted: text("access_token_encrypted").notNull(),
+    refreshTokenEncrypted: text("refresh_token_encrypted"),
+    tokenExpiresAt: integer("token_expires_at", { mode: "timestamp_ms" }).notNull(),
+    encryptionKeyVersion: integer("encryption_key_version").notNull().default(1),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("mailbox_credentials_mailbox_unique").on(table.mailboxId),
+    index("mailbox_credentials_tenant_idx").on(table.tenantId),
+  ],
+);
+
+export const gmailOAuthAttempts = sqliteTable(
+  "gmail_oauth_attempts",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    actorEmail: text("actor_email").notNull(),
+    stateHash: text("state_hash").notNull(),
+    nonceHash: text("nonce_hash").notNull(),
+    codeVerifierEncrypted: text("code_verifier_encrypted").notNull(),
+    redirectUri: text("redirect_uri").notNull(),
+    returnPath: text("return_path").notNull().default("/"),
+    scopesJson: text("scopes_json").notNull(),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+    consumedAt: integer("consumed_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [
+    uniqueIndex("gmail_oauth_attempts_state_hash_unique").on(table.stateHash),
+    index("gmail_oauth_attempts_tenant_expiry_idx").on(table.tenantId, table.expiresAt),
+  ],
+);
+
+export const syncRuns = sqliteTable(
+  "sync_runs",
+  {
+    id: text("id").primaryKey(),
+    tenantId: text("tenant_id")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    mailboxId: text("mailbox_id")
+      .notNull()
+      .references(() => mailboxes.id, { onDelete: "cascade" }),
+    idempotencyKey: text("idempotency_key").notNull(),
+    status: text("status", {
+      enum: ["pending", "running", "succeeded", "failed", "cancelled"],
+    })
+      .notNull()
+      .default("pending"),
+    requestedBy: text("requested_by").notNull(),
+    importedMessages: integer("imported_messages").notNull().default(0),
+    importedThreads: integer("imported_threads").notNull().default(0),
+    providerHistoryId: text("provider_history_id"),
+    errorCode: text("error_code"),
+    startedAt: integer("started_at", { mode: "timestamp_ms" }),
+    completedAt: integer("completed_at", { mode: "timestamp_ms" }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("sync_runs_tenant_idempotency_unique").on(
+      table.tenantId,
+      table.idempotencyKey,
+    ),
+    index("sync_runs_tenant_mailbox_idx").on(table.tenantId, table.mailboxId),
   ],
 );
 
@@ -138,6 +260,11 @@ export const threads = sqliteTable(
       .default("open"),
     assignedTo: text("assigned_to"),
     lastMessageAt: integer("last_message_at", { mode: "timestamp_ms" }).notNull(),
+    providerMessageCount: integer("provider_message_count").notNull().default(0),
+    completeThreadImported: integer("complete_thread_imported", { mode: "boolean" })
+      .notNull()
+      .default(false),
+    lastSyncedAt: integer("last_synced_at", { mode: "timestamp_ms" }),
     ...timestamps,
   },
   (table) => [
@@ -171,7 +298,13 @@ export const messages = sqliteTable(
     copiedRecipientsJson: text("copied_recipients_json").notNull().default("[]"),
     subject: text("subject").notNull(),
     textBody: text("text_body").notNull(),
+    snippet: text("snippet").notNull().default(""),
+    labelsJson: text("labels_json").notNull().default("[]"),
+    internetMessageId: text("internet_message_id"),
+    inReplyTo: text("in_reply_to"),
+    referencesJson: text("references_json").notNull().default("[]"),
     receivedAt: integer("received_at", { mode: "timestamp_ms" }).notNull(),
+    contentRetainUntil: integer("content_retain_until", { mode: "timestamp_ms" }),
     contentHash: text("content_hash").notNull(),
     ingestionStatus: text("ingestion_status", {
       enum: ["received", "analysing", "analysed", "review", "failed"],
@@ -236,6 +369,7 @@ export const messageAnalyses = sqliteTable(
     messageId: text("message_id")
       .notNull()
       .references(() => messages.id, { onDelete: "cascade" }),
+    analysisKey: text("analysis_key").notNull(),
     version: integer("version").notNull(),
     primaryCategory: text("primary_category").notNull(),
     secondaryCategoriesJson: text("secondary_categories_json").notNull().default("[]"),
@@ -249,8 +383,18 @@ export const messageAnalyses = sqliteTable(
     missingInformationJson: text("missing_information_json").notNull().default("[]"),
     entitiesJson: text("entities_json").notNull().default("[]"),
     requiredActionsJson: text("required_actions_json").notNull().default("[]"),
+    detectedDatesJson: text("detected_dates_json").notNull().default("[]"),
+    detectedDeadlinesJson: text("detected_deadlines_json").notNull().default("[]"),
+    detectedFinancialAmountsJson: text("detected_financial_amounts_json")
+      .notNull()
+      .default("[]"),
     riskFlagsJson: text("risk_flags_json").notNull().default("[]"),
     confidenceScore: integer("confidence_score").notNull(),
+    recommendedAssignee: text("recommended_assignee"),
+    replyRequired: integer("reply_required", { mode: "boolean" }).notNull(),
+    approvalRequired: integer("approval_required", { mode: "boolean" }).notNull(),
+    suggestedReply: text("suggested_reply").notNull(),
+    suggestedNextAction: text("suggested_next_action").notNull(),
     reviewRequired: integer("review_required", { mode: "boolean" }).notNull(),
     automationEligibilityJson: text("automation_eligibility_json").notNull(),
     auditReason: text("audit_reason").notNull(),
@@ -265,6 +409,10 @@ export const messageAnalyses = sqliteTable(
       table.version,
     ),
     index("analyses_tenant_review_idx").on(table.tenantId, table.reviewRequired),
+    uniqueIndex("analyses_tenant_analysis_key_unique").on(
+      table.tenantId,
+      table.analysisKey,
+    ),
   ],
 );
 
@@ -278,6 +426,16 @@ export const drafts = sqliteTable(
     messageId: text("message_id")
       .notNull()
       .references(() => messages.id, { onDelete: "cascade" }),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => threads.id, { onDelete: "cascade" }),
+    mailboxId: text("mailbox_id")
+      .notNull()
+      .references(() => mailboxes.id, { onDelete: "cascade" }),
+    proposalKey: text("proposal_key").notNull(),
+    sourceAnalysisId: text("source_analysis_id").references(() => messageAnalyses.id, {
+      onDelete: "set null",
+    }),
     status: text("status", {
       enum: ["proposed", "edited", "approved", "rejected", "executed", "superseded"],
     })
@@ -287,7 +445,10 @@ export const drafts = sqliteTable(
     createdBy: text("created_by").notNull(),
     ...timestamps,
   },
-  (table) => [index("drafts_tenant_status_idx").on(table.tenantId, table.status)],
+  (table) => [
+    index("drafts_tenant_status_idx").on(table.tenantId, table.status),
+    uniqueIndex("drafts_tenant_proposal_key_unique").on(table.tenantId, table.proposalKey),
+  ],
 );
 
 export const draftVersions = sqliteTable(
@@ -328,23 +489,41 @@ export const approvalRequests = sqliteTable(
     messageId: text("message_id")
       .notNull()
       .references(() => messages.id, { onDelete: "cascade" }),
-    draftVersionId: text("draft_version_id").references(() => draftVersions.id, {
-      onDelete: "restrict",
-    }),
-    actionType: text("action_type").notNull(),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => threads.id, { onDelete: "cascade" }),
+    draftId: text("draft_id")
+      .notNull()
+      .references(() => drafts.id, { onDelete: "restrict" }),
+    draftVersionId: text("draft_version_id")
+      .notNull()
+      .references(() => draftVersions.id, { onDelete: "restrict" }),
+    draftVersion: integer("draft_version").notNull(),
+    draftContentHash: text("draft_content_hash").notNull(),
+    actionType: text("action_type", { enum: ["create_gmail_draft"] })
+      .notNull()
+      .default("create_gmail_draft"),
     actionHash: text("action_hash").notNull(),
-    status: text("status", { enum: ["pending", "approved", "rejected", "expired"] })
+    status: text("status", {
+      enum: ["pending", "approved", "rejected", "expired", "revoked"],
+    })
       .notNull()
       .default("pending"),
     requestedBy: text("requested_by").notNull(),
     decidedBy: text("decided_by"),
     decidedAt: integer("decided_at", { mode: "timestamp_ms" }),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+    revokedAt: integer("revoked_at", { mode: "timestamp_ms" }),
     decisionNote: text("decision_note"),
     ...timestamps,
   },
   (table) => [
     index("approval_requests_tenant_status_idx").on(table.tenantId, table.status),
     uniqueIndex("approval_requests_tenant_action_hash_unique").on(table.tenantId, table.actionHash),
+    uniqueIndex("approval_requests_tenant_draft_version_unique").on(
+      table.tenantId,
+      table.draftVersionId,
+    ),
   ],
 );
 
@@ -358,20 +537,39 @@ export const actionExecutions = sqliteTable(
     messageId: text("message_id")
       .notNull()
       .references(() => messages.id, { onDelete: "cascade" }),
+    mailboxId: text("mailbox_id")
+      .notNull()
+      .references(() => mailboxes.id, { onDelete: "restrict" }),
+    draftId: text("draft_id")
+      .notNull()
+      .references(() => drafts.id, { onDelete: "restrict" }),
+    draftVersionId: text("draft_version_id")
+      .notNull()
+      .references(() => draftVersions.id, { onDelete: "restrict" }),
     approvalRequestId: text("approval_request_id").references(() => approvalRequests.id, {
       onDelete: "restrict",
     }),
-    actionType: text("action_type").notNull(),
+    actionType: text("action_type", { enum: ["create_gmail_draft"] })
+      .notNull()
+      .default("create_gmail_draft"),
     idempotencyKey: text("idempotency_key").notNull(),
+    correlationId: text("correlation_id").notNull(),
     status: text("status", {
       enum: ["proposed", "attempting", "succeeded", "failed", "ambiguous", "cancelled"],
     })
       .notNull()
       .default("proposed"),
     providerResultReference: text("provider_result_reference"),
+    providerMessageId: text("provider_message_id"),
+    providerThreadId: text("provider_thread_id"),
+    rfcMessageId: text("rfc_message_id").notNull(),
+    providerConfirmed: integer("provider_confirmed", { mode: "boolean" })
+      .notNull()
+      .default(false),
     errorCode: text("error_code"),
     attemptedAt: integer("attempted_at", { mode: "timestamp_ms" }),
     completedAt: integer("completed_at", { mode: "timestamp_ms" }),
+    confirmedAt: integer("confirmed_at", { mode: "timestamp_ms" }),
     ...timestamps,
   },
   (table) => [
@@ -398,6 +596,12 @@ export const auditEvents = sqliteTable(
     eventType: text("event_type").notNull(),
     action: text("action").notNull(),
     status: text("status").notNull(),
+    targetType: text("target_type").notNull(),
+    targetId: text("target_id"),
+    result: text("result").notNull(),
+    requestId: text("request_id"),
+    correlationId: text("correlation_id"),
+    idempotencyKey: text("idempotency_key"),
     approvalStatus: text("approval_status"),
     ruleReferencesJson: text("rule_references_json").notNull().default("[]"),
     confidenceScore: integer("confidence_score"),
@@ -411,5 +615,9 @@ export const auditEvents = sqliteTable(
     uniqueIndex("audit_events_tenant_event_hash_unique").on(table.tenantId, table.eventHash),
     index("audit_events_tenant_created_idx").on(table.tenantId, table.createdAt),
     index("audit_events_tenant_message_idx").on(table.tenantId, table.messageId),
+    uniqueIndex("audit_events_tenant_idempotency_unique").on(
+      table.tenantId,
+      table.idempotencyKey,
+    ),
   ],
 );

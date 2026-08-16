@@ -1,80 +1,49 @@
 import { eq } from "drizzle-orm";
+import { z } from "zod";
 import { getDb } from "@/db";
 import { tenantSettings } from "@/db/schema";
-import { evaluatePolicy, type PolicyAction } from "@/lib/policy";
+import { evaluatePolicy } from "@/lib/policy";
 import { jsonError, resolveTenantContext } from "@/lib/tenant-context";
 
-type PolicyRequest = {
-  action?: PolicyAction;
-  category?: string;
-  priority?: "critical" | "high" | "normal" | "low";
-  confidence?: number;
-  riskFlags?: string[];
-  isNewContact?: boolean;
-  approvalRecorded?: boolean;
-};
-
-const policyActions = new Set<PolicyAction>([
-  "draft",
-  "label",
-  "reply",
-  "forward",
-  "archive",
-  "delete",
-]);
+const policyRequestSchema = z.object({
+  action: z.literal("propose_draft"),
+  category: z.string().trim().min(1).max(100),
+  priority: z.enum(["critical", "high", "normal", "low"]),
+  confidence: z.number().int().min(0).max(100),
+  riskFlags: z.array(z.string().trim().min(1).max(100)).max(25).default([]),
+}).strict();
 
 export async function POST(request: Request) {
   try {
     const context = await resolveTenantContext(request.headers);
-    const body = (await request.json()) as PolicyRequest;
-
-    if (
-      !body.action ||
-      !policyActions.has(body.action) ||
-      !body.category ||
-      !body.priority ||
-      typeof body.confidence !== "number"
-    ) {
-      return Response.json({ error: "A valid action and message assessment are required." }, { status: 400 });
+    const parsed = policyRequestSchema.safeParse(await request.json());
+    if (!parsed.success) {
+      return Response.json(
+        { error: "A valid local draft-proposal assessment is required." },
+        { status: 400 },
+      );
     }
 
     const [settings] = await getDb()
-      .select()
+      .select({
+        operatingMode: tenantSettings.operatingMode,
+        minimumClassificationConfidence: tenantSettings.minimumClassificationConfidence,
+        autoDraft: tenantSettings.autoDraft,
+      })
       .from(tenantSettings)
       .where(eq(tenantSettings.tenantId, context.tenantId))
       .limit(1);
 
-    const safeSettings = settings ?? {
-      operatingMode: "safe" as const,
-      minimumClassificationConfidence: 85,
-      autoDraft: true,
-      autoLabel: true,
-      autoSend: false,
-      autoArchive: false,
-      autoForward: false,
-      autoDelete: false,
-    };
-
-    const capabilityEnabled = {
-      draft: safeSettings.autoDraft,
-      label: safeSettings.autoLabel,
-      reply: safeSettings.autoSend,
-      forward: safeSettings.autoForward,
-      archive: safeSettings.autoArchive,
-      delete: safeSettings.autoDelete,
-    }[body.action];
-
     const decision = evaluatePolicy({
-      mode: safeSettings.operatingMode,
-      action: body.action,
-      category: body.category,
-      priority: body.priority,
-      confidence: body.confidence,
-      minimumConfidence: safeSettings.minimumClassificationConfidence,
-      riskFlags: Array.isArray(body.riskFlags) ? body.riskFlags : [],
-      isNewContact: Boolean(body.isNewContact),
-      approvalRecorded: Boolean(body.approvalRecorded),
-      capabilityEnabled,
+      mode: settings?.operatingMode === "draft" ? "draft" : "safe",
+      action: "propose_draft",
+      category: parsed.data.category,
+      priority: parsed.data.priority,
+      confidence: parsed.data.confidence,
+      minimumConfidence: settings?.minimumClassificationConfidence ?? 85,
+      riskFlags: parsed.data.riskFlags,
+      capabilityEnabled: settings?.autoDraft ?? true,
+      approvalVerifiedByServer: false,
     });
 
     return Response.json({ decision });
@@ -82,3 +51,4 @@ export async function POST(request: Request) {
     return jsonError(error);
   }
 }
+

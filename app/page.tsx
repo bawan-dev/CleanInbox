@@ -1,33 +1,22 @@
 import { headers } from "next/headers";
-import ClearInboxApp, { type ClearInboxView } from "./clear-inbox-app";
+import SecureWorkspace from "./secure-workspace";
 
-const views = new Set<ClearInboxView>(["triage", "approvals", "drafts", "audit", "automation"]);
+function decodeDisplayName(value: string | null, encoding: string | null) {
+  if (!value || encoding !== "percent-encoded-utf-8") return null;
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return null;
+  }
+}
 
-export default async function Home({
-  searchParams,
-}: {
-  searchParams: Promise<{ view?: string; message?: string }>;
-}) {
+export default async function Home() {
   const requestHeaders = await headers();
-  const params = await searchParams;
   const email = requestHeaders.get("oai-authenticated-user-email");
-  const encodedFullName = requestHeaders.get("oai-authenticated-user-full-name");
-  const fullName =
-    encodedFullName &&
-    requestHeaders.get("oai-authenticated-user-full-name-encoding") ===
-      "percent-encoded-utf-8"
-      ? decodeURIComponent(encodedFullName)
-      : null;
-
-  const initialView = views.has(params.view as ClearInboxView)
-    ? (params.view as ClearInboxView)
-    : "triage";
-
-  return (
-    <ClearInboxApp
-      displayName={fullName ?? email}
-      initialView={initialView}
-      initialMessageId={params.message}
-    />
+  const displayName = decodeDisplayName(
+    requestHeaders.get("oai-authenticated-user-full-name"),
+    requestHeaders.get("oai-authenticated-user-full-name-encoding"),
   );
+
+  return <SecureWorkspace initialDisplayName={displayName ?? email} />;
 }

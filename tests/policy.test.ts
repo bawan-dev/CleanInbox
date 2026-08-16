@@ -2,82 +2,59 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { evaluatePolicy, type PolicyInput } from "../lib/policy";
 
-const safeReply: PolicyInput = {
+const proposal: PolicyInput = {
   mode: "safe",
-  action: "reply",
-  category: "Customer support",
+  action: "propose_draft",
+  category: "customer support",
   priority: "normal",
-  confidence: 96,
+  confidence: 93,
   minimumConfidence: 85,
   riskFlags: [],
-  isNewContact: false,
-  approvalRecorded: false,
   capabilityEnabled: true,
+  approvalVerifiedByServer: false,
 };
 
-test("Safe Mode requires approval for external replies", () => {
-  const decision = evaluatePolicy(safeReply);
-  assert.equal(decision.eligible, false);
-  assert.equal(decision.approvalRequired, true);
-  assert.equal(decision.reasonCode, "SAFE_MODE_EXTERNAL_ACTION");
-});
-
-test("Safe Mode permits the exact approved low-risk reply", () => {
-  const decision = evaluatePolicy({ ...safeReply, approvalRecorded: true });
+test("Safe Mode permits a local proposal but always records approval as required", () => {
+  const decision = evaluatePolicy(proposal);
   assert.equal(decision.eligible, true);
   assert.equal(decision.approvalRequired, true);
+  assert.equal(decision.externallyVisible, false);
 });
 
-test("prohibited categories stay blocked even with approval", () => {
-  const decision = evaluatePolicy({
-    ...safeReply,
-    category: "Security incident",
-    priority: "critical",
-    riskFlags: ["Account compromise"],
-    approvalRecorded: true,
-  });
-  assert.equal(decision.eligible, false);
-  assert.equal(decision.reasonCode, "PROHIBITED_CATEGORY");
+test("critical and risk-flagged content stays review-required", () => {
+  const decision = evaluatePolicy({ ...proposal, priority: "critical", riskFlags: ["security"] });
+  assert.equal(decision.eligible, true);
+  assert.equal(decision.approvalRequired, true);
+  assert.equal(decision.reasonCode, "REVIEW_REQUIRED");
 });
 
 test("below-threshold confidence fails closed", () => {
-  const decision = evaluatePolicy({
-    ...safeReply,
-    action: "draft",
-    confidence: 84,
-    capabilityEnabled: true,
-  });
+  const decision = evaluatePolicy({ ...proposal, confidence: 84 });
   assert.equal(decision.eligible, false);
   assert.equal(decision.reasonCode, "LOW_CONFIDENCE");
 });
 
-test("internal low-risk drafting is eligible when enabled", () => {
-  const decision = evaluatePolicy({
-    ...safeReply,
-    action: "draft",
-    capabilityEnabled: true,
-  });
-  assert.equal(decision.eligible, true);
-  assert.equal(decision.externallyVisible, false);
-});
-
-test("disabled capabilities cannot be bypassed by mode or approval", () => {
-  const decision = evaluatePolicy({
-    ...safeReply,
-    mode: "autonomous",
-    approvalRecorded: true,
-    capabilityEnabled: false,
-  });
+test("disabled proposal generation cannot be bypassed", () => {
+  const decision = evaluatePolicy({ ...proposal, capabilityEnabled: false });
   assert.equal(decision.eligible, false);
   assert.equal(decision.reasonCode, "CAPABILITY_DISABLED");
 });
 
-test("new contacts require approval in assisted mode", () => {
-  const decision = evaluatePolicy({
-    ...safeReply,
-    mode: "assisted",
-    isNewContact: true,
+test("Gmail draft creation requires a server-verified exact-version approval", () => {
+  const blocked = evaluatePolicy({
+    ...proposal,
+    action: "create_gmail_draft",
+    approvalVerifiedByServer: false,
   });
-  assert.equal(decision.eligible, false);
-  assert.equal(decision.reasonCode, "NEW_CONTACT_APPROVAL_REQUIRED");
+  const allowed = evaluatePolicy({
+    ...proposal,
+    action: "create_gmail_draft",
+    approvalVerifiedByServer: true,
+  });
+
+  assert.equal(blocked.eligible, false);
+  assert.equal(blocked.reasonCode, "SERVER_APPROVAL_REQUIRED");
+  assert.equal(allowed.eligible, true);
+  assert.equal(allowed.externallyVisible, false);
 });
+

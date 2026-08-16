@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX `mailboxes_tenant_active_provider_unique` ON `mailboxes` (`tenant_id`,`provider`) WHERE "mailboxes"."status" = 'active';

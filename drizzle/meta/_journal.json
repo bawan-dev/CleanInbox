@@ -8,6 +8,34 @@
       "when": 1786051398798,
       "tag": "0000_uneven_romulus",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1786053492549,
+      "tag": "0001_lean_sunset_bain",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1786053816469,
+      "tag": "0002_common_hellfire_club",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1786054254021,
+      "tag": "0003_simple_supernaut",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1786054413161,
+      "tag": "0004_chubby_sunspot",
+      "breakpoints": true
     }
   ]
 }
