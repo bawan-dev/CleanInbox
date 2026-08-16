@@ -588,6 +588,7 @@ export const auditEvents = sqliteTable(
     tenantId: text("tenant_id")
       .notNull()
       .references(() => tenants.id, { onDelete: "restrict" }),
+    sequence: integer("sequence").notNull(),
     messageId: text("message_id"),
     threadId: text("thread_id"),
     actorType: text("actor_type", { enum: ["system", "assistant", "user", "integration"] })
@@ -613,6 +614,7 @@ export const auditEvents = sqliteTable(
   },
   (table) => [
     uniqueIndex("audit_events_tenant_event_hash_unique").on(table.tenantId, table.eventHash),
+    uniqueIndex("audit_events_tenant_sequence_unique").on(table.tenantId, table.sequence),
     index("audit_events_tenant_created_idx").on(table.tenantId, table.createdAt),
     index("audit_events_tenant_message_idx").on(table.tenantId, table.messageId),
     uniqueIndex("audit_events_tenant_idempotency_unique").on(

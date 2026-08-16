@@ -46,7 +46,7 @@ import {
   Zap,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { demoMessages, inboxCounts, initialAuditEvents } from "@/lib/demo-data";
+import { demoMessages, inboxCounts, initialAuditEvents } from "./demo-data";
 import type { AuditEvent, InboxMessage, Priority } from "@/lib/types";
 
 export type ClearInboxView = "triage" | "approvals" | "drafts" | "audit" | "automation";

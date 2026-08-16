@@ -1,4 +1,4 @@
-import type { AuditEvent, InboxMessage } from "./types";
+import type { AuditEvent, InboxMessage } from "../../lib/types";
 
 export const demoMessages: InboxMessage[] = [
   {
