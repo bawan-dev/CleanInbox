@@ -28,6 +28,7 @@ import {
   X,
 } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { brand } from "@/lib/brand";
 
 type AppStage = "loading" | "auth" | "onboarding" | "ready" | "error";
 type WorkspaceView = "inbox" | "settings" | "audit";
@@ -243,13 +244,278 @@ function friendlyOAuthReason(reason: string | null) {
 
 function Brand() {
   return (
-    <div className="secure-brand" aria-label="ClearInbox">
+    <div className="secure-brand" aria-label={brand.displayName}>
       <span className="secure-brand-mark" aria-hidden="true">
         <span />
         <span />
         <span />
       </span>
-      <strong>ClearInbox</strong>
+      <strong>{brand.displayName}</strong>
+    </div>
+  );
+}
+
+function InboxView({
+  mailbox,
+  messages,
+  totalMessages,
+  query,
+  setQuery,
+  selectedMessageId,
+  selectMessage,
+  mobileDetailOpen,
+  closeMobileDetail,
+  detail,
+  detailLoading,
+  draftBody,
+  setDraftBody,
+  busy,
+  onAnalyse,
+  onSaveDraft,
+  onApproveDraft,
+  onCreateGmailDraft,
+  onConnect,
+  onSync,
+}: {
+  mailbox: Mailbox | null;
+  messages: QueueMessage[];
+  totalMessages: number;
+  query: string;
+  setQuery: (value: string) => void;
+  selectedMessageId: string | null;
+  selectMessage: (id: string) => void;
+  mobileDetailOpen: boolean;
+  closeMobileDetail: () => void;
+  detail: MessageDetail | null;
+  detailLoading: boolean;
+  draftBody: string;
+  setDraftBody: (value: string) => void;
+  busy: string | null;
+  onAnalyse: () => void;
+  onSaveDraft: () => void;
+  onApproveDraft: () => void;
+  onCreateGmailDraft: () => void;
+  onConnect: () => void;
+  onSync: () => void;
+}) {
+  return (
+    <div className="secure-inbox-layout">
+      <aside className="secure-queue-panel">
+        <div className="secure-search-wrap">
+          <Search size={14} />
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search queue"
+            aria-label="Search queue"
+          />
+        </div>
+        <div className="secure-queue-header">
+          <strong>{totalMessages} threads</strong>
+          {mailbox?.status === "active" ? (
+            <button className="secure-button secondary" onClick={onSync} disabled={busy === "sync"}>
+              <RefreshCw size={14} /> Sync
+            </button>
+          ) : (
+            <button className="secure-button primary" onClick={onConnect} disabled={busy === "connect"}>
+              <Plug size={14} /> Connect
+            </button>
+          )}
+        </div>
+        <div className="secure-queue-list">
+          {messages.length === 0 ? (
+            <div className="secure-empty-state">No matching messages.</div>
+          ) : (
+            messages.map((message) => (
+              <button
+                key={message.id}
+                className={selectedMessageId === message.id ? "secure-queue-item active" : "secure-queue-item"}
+                onClick={() => selectMessage(message.id)}
+                type="button"
+              >
+                <div className="secure-queue-topline">
+                  <span>{message.senderName ?? message.senderEmail}</span>
+                  <em>{message.analysis?.priority ?? "Unreviewed"}</em>
+                </div>
+                <strong>{message.subject}</strong>
+                <small>{message.snippet}</small>
+              </button>
+            ))
+          )}
+        </div>
+      </aside>
+
+      <div className="secure-detail-panel">
+        {detailLoading ? (
+          <div className="secure-empty-state">Loading thread…</div>
+        ) : detail ? (
+          <>
+            <div className="secure-detail-header">
+              <h2>{detail.thread.subject}</h2>
+              {detail.analysis ? <span>{detail.analysis.primaryCategory}</span> : null}
+            </div>
+            <div className="secure-thread-body">
+              {detail.thread.messages.map((message) => (
+                <article key={message.id} className="secure-message-card">
+                  <header>
+                    <strong>{message.senderName ?? message.senderEmail}</strong>
+                    <time>{formatDate(message.receivedAt)}</time>
+                  </header>
+                  <p>{message.textBody || "No plain-text content available."}</p>
+                </article>
+              ))}
+            </div>
+            <div className="secure-draft-panel">
+              <textarea
+                value={draftBody}
+                onChange={(event) => setDraftBody(event.target.value)}
+                rows={12}
+                aria-label="Draft body"
+              />
+              <div className="secure-action-row">
+                <button className="secure-button secondary" onClick={onAnalyse} disabled={busy === "analyse"}>
+                  Analyse
+                </button>
+                <button className="secure-button secondary" onClick={onSaveDraft} disabled={busy === "save-draft"}>
+                  Save version
+                </button>
+                <button className="secure-button secondary" onClick={onApproveDraft} disabled={busy === "approve"}>
+                  Approve
+                </button>
+                <button className="secure-button primary" onClick={onCreateGmailDraft} disabled={busy === "gmail-draft"}>
+                  Create Gmail draft
+                </button>
+              </div>
+            </div>
+          </>
+        ) : (
+          <div className="secure-empty-state">Select a thread to review.</div>
+        )}
+      </div>
+
+      {mobileDetailOpen && detail ? (
+        <div className="secure-mobile-detail-backdrop" onClick={closeMobileDetail} />
+      ) : null}
+    </div>
+  );
+}
+
+function SettingsView({
+  settings,
+  isOwner,
+  busy,
+  onSave,
+}: {
+  settings: Settings | null;
+  isOwner: boolean;
+  busy: string | null;
+  onSave: (next: Settings) => void;
+}) {
+  const next = settings ?? {
+    operatingMode: "safe",
+    minimumClassificationConfidence: 85,
+    initialSyncLimit: 25,
+    contentRetentionDays: 30,
+    attachmentsEnabled: false,
+    retainDraftAfterGmailCreation: true,
+    businessTimezone: "UTC",
+    businessInstructions: "",
+    version: 1,
+    updatedAt: new Date().toISOString(),
+  };
+
+  return (
+    <div className="secure-settings-layout">
+      <div className="secure-form-grid">
+        <label>
+          Minimum confidence
+          <input
+            type="number"
+            min={50}
+            max={100}
+            value={next.minimumClassificationConfidence}
+            onChange={(event) =>
+              onSave({
+                ...next,
+                minimumClassificationConfidence: Number(event.target.value || 85),
+              })
+            }
+          />
+        </label>
+        <label>
+          Initial sync limit
+          <input
+            type="number"
+            min={1}
+            max={100}
+            value={next.initialSyncLimit}
+            onChange={(event) =>
+              onSave({ ...next, initialSyncLimit: Number(event.target.value || 25) })
+            }
+          />
+        </label>
+        <label>
+          Retention days
+          <input
+            type="number"
+            min={1}
+            max={365}
+            value={next.contentRetentionDays}
+            onChange={(event) =>
+              onSave({ ...next, contentRetentionDays: Number(event.target.value || 30) })
+            }
+          />
+        </label>
+        <label>
+          Business timezone
+          <input
+            value={next.businessTimezone}
+            onChange={(event) => onSave({ ...next, businessTimezone: event.target.value })}
+          />
+        </label>
+      </div>
+      <label className="secure-checkbox-row">
+        <input
+          type="checkbox"
+          checked={next.retainDraftAfterGmailCreation}
+          onChange={(event) =>
+            onSave({ ...next, retainDraftAfterGmailCreation: event.target.checked })
+          }
+        />
+        Retain draft after Gmail creation
+      </label>
+      <label>
+        Business instructions
+        <textarea
+          rows={6}
+          value={next.businessInstructions}
+          onChange={(event) => onSave({ ...next, businessInstructions: event.target.value })}
+        />
+      </label>
+      <button className="secure-button primary" disabled={busy === "settings" || !isOwner}>
+        {busy === "settings" ? "Saving…" : "Save settings"}
+      </button>
+    </div>
+  );
+}
+
+function AuditView({ events }: { events: AuditEvent[] }) {
+  return (
+    <div className="secure-audit-layout">
+      {events.length === 0 ? (
+        <div className="secure-empty-state">No audit events are visible to this role.</div>
+      ) : (
+        <ul className="secure-audit-list">
+          {events.map((event) => (
+            <li key={event.id} className="secure-audit-item">
+              <strong>{event.eventType}</strong>
+              <span>{event.action}</span>
+              <small>{event.actorId ?? "system"}</small>
+              <time>{formatDate(event.createdAt)}</time>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
@@ -343,22 +609,28 @@ export default function SecureWorkspace({ initialDisplayName }: { initialDisplay
   }, [loadWorkspace]);
 
   useEffect(() => {
-    void initialise();
+    const timer = window.setTimeout(() => {
+      void initialise();
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [initialise]);
 
   useEffect(() => {
-    const url = new URL(window.location.href);
-    const outcome = url.searchParams.get("gmail");
-    if (outcome === "connected") {
-      setNotice({ tone: "success", message: "Gmail connected. Run a sync when you are ready." });
-    } else if (outcome === "error") {
-      setNotice({ tone: "error", message: friendlyOAuthReason(url.searchParams.get("reason")) });
-    }
-    if (outcome) {
-      url.searchParams.delete("gmail");
-      url.searchParams.delete("reason");
-      window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
-    }
+    const timer = window.setTimeout(() => {
+      const url = new URL(window.location.href);
+      const outcome = url.searchParams.get("gmail");
+      if (outcome === "connected") {
+        setNotice({ tone: "success", message: "Gmail connected. Run a sync when you are ready." });
+      } else if (outcome === "error") {
+        setNotice({ tone: "error", message: friendlyOAuthReason(url.searchParams.get("reason")) });
+      }
+      if (outcome) {
+        url.searchParams.delete("gmail");
+        url.searchParams.delete("reason");
+        window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, []);
 
   useEffect(() => {
@@ -385,8 +657,14 @@ export default function SecureWorkspace({ initialDisplayName }: { initialDisplay
   }, []);
 
   useEffect(() => {
-    if (stage === "ready" && selectedMessageId) void refreshDetail(selectedMessageId);
-    if (!selectedMessageId) setDetail(null);
+    const timer = window.setTimeout(() => {
+      if (stage === "ready" && selectedMessageId) {
+        void refreshDetail(selectedMessageId);
+      } else if (!selectedMessageId) {
+        setDetail(null);
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [refreshDetail, selectedMessageId, stage]);
 
   const refreshWorkspace = useCallback(async () => {
@@ -616,7 +894,7 @@ export default function SecureWorkspace({ initialDisplayName }: { initialDisplay
       <FullPageState
         icon={<LoaderCircle className="secure-spin" size={24} />}
         eyebrow="Secure workspace"
-        title="Opening ClearInbox"
+        title={`Opening ${brand.displayName}`}
         copy="Loading your tenant-scoped workspace…"
       />
     );
@@ -628,7 +906,7 @@ export default function SecureWorkspace({ initialDisplayName }: { initialDisplay
         icon={<LockKeyhole size={24} />}
         eyebrow="Authentication required"
         title="Open this app from your workspace"
-        copy="ClearInbox needs an authenticated workspace identity. No email data is available without it."
+        copy={`${brand.displayName} needs an authenticated workspace identity. No email data is available without it.`}
       >
         <button className="secure-button primary" onClick={() => void initialise()}>
           <RefreshCw size={15} /> Try again
@@ -676,7 +954,7 @@ export default function SecureWorkspace({ initialDisplayName }: { initialDisplay
       <FullPageState
         icon={<AlertCircle size={24} />}
         eyebrow="Workspace unavailable"
-        title="ClearInbox could not open safely"
+        title={`${brand.displayName} could not open safely`}
         copy={stageError || "A tenant-scoped workspace could not be resolved."}
       >
         <button className="secure-button primary" onClick={() => void initialise()}>
@@ -694,7 +972,7 @@ export default function SecureWorkspace({ initialDisplayName }: { initialDisplay
     <main className="secure-app">
       <div className="secure-safety-bar" role="status">
         <ShieldCheck size={14} />
-        <strong>Safe Mode</strong>
+        <strong>{brand.betaLabel}</strong>
         <span aria-hidden="true">·</span>
         <span>Gmail draft-only</span>
         <span aria-hidden="true">·</span>

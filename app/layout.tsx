@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { brand } from "@/lib/brand";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -13,7 +14,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "ClearInbox — Email intelligence, safely operated",
+  title: `${brand.displayName} — ${brand.tagline}`,
   description:
     "A tenant-safe email intelligence and inbox operations workspace for business teams.",
   icons: {

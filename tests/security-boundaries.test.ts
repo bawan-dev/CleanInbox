@@ -215,7 +215,7 @@ test("Gmail provider code exposes read operations and draft creation only", () =
 
 test("message detail is text-only, blocks remote content, and keeps attachments metadata-only", () => {
   const detailRoute = source("app/api/messages/[messageId]/route.ts");
-  const inboxUi = source("app/clear-inbox-app.tsx");
+  const inboxUi = source("examples/demo-ui/clear-inbox-app.tsx");
   const parser = source("lib/sync/parser.ts");
   const gmailClient = source("lib/gmail/client.ts");
 
